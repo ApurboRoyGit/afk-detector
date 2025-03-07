@@ -267,6 +267,10 @@ class AFKGuardian:
         self.last_activity = time.time()
         activity_status = "Active"
         
+        # Create analytics data structures
+        start_time = time.time()
+        activity_history = []  # List of (timestamp, is_active, face_detected)
+        
         # Start keyboard and mouse listeners
         try:
             keyboard_listener = keyboard.Listener(on_press=self._on_activity)
@@ -289,7 +293,14 @@ class AFKGuardian:
             
             # Create a named window with a specific size
             cv2.namedWindow('AFK Guardian - Camera Preview', cv2.WINDOW_NORMAL)
-            cv2.resizeWindow('AFK Guardian - Camera Preview', 800, 600)
+            cv2.resizeWindow('AFK Guardian - Camera Preview', 1200, 800)
+            
+            # Create a separate window for analytics
+            cv2.namedWindow('AFK Guardian - Analytics', cv2.WINDOW_NORMAL)
+            cv2.resizeWindow('AFK Guardian - Analytics', 800, 400)
+            
+            # Create blank analytics image
+            analytics_img = np.ones((400, 800, 3), dtype=np.uint8) * 255
             
             while True:
                 # Read a frame from the webcam
@@ -312,13 +323,19 @@ class AFKGuardian:
                 # Check for keyboard/mouse activity
                 current_time = time.time()
                 time_since_activity = current_time - self.last_activity
+                elapsed_time = current_time - start_time
                 
                 if time_since_activity < self.afk_threshold:
                     activity_status = "Active"
                     activity_color = (0, 255, 0)  # Green
+                    is_active = 1
                 else:
                     activity_status = "Inactive"
                     activity_color = (0, 0, 255)  # Red
+                    is_active = 0
+                
+                # Record activity data
+                activity_history.append((elapsed_time, is_active, int(len(faces) > 0)))
                 
                 # Add text to show if a face is detected
                 face_status = f"Face Detected: {len(faces) > 0}"
@@ -333,17 +350,109 @@ class AFKGuardian:
                 cv2.putText(frame, f"Time since activity: {int(time_since_activity)}s", (10, 110), 
                             cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
                 
-                # Display the resulting frame
+                # Update analytics visualization
+                if len(activity_history) > 1:
+                    # Create a blank white image for analytics
+                    analytics_img = np.ones((400, 800, 3), dtype=np.uint8) * 255
+                    
+                    # Draw activity timeline (last 60 seconds or all data if less)
+                    max_time_window = 60  # seconds to display
+                    current_time = activity_history[-1][0]
+                    start_display_time = max(0, current_time - max_time_window)
+                    
+                    # Filter data for the time window
+                    display_data = [point for point in activity_history if point[0] >= start_display_time]
+                    
+                    if len(display_data) > 1:
+                        # Draw activity graph
+                        graph_height = 150
+                        graph_y_offset = 50
+                        graph_width = 750
+                        graph_x_offset = 25
+                        
+                        # Draw axes
+                        cv2.line(analytics_img, 
+                                (graph_x_offset, graph_y_offset + graph_height), 
+                                (graph_x_offset + graph_width, graph_y_offset + graph_height), 
+                                (0, 0, 0), 2)  # X-axis
+                        cv2.line(analytics_img, 
+                                (graph_x_offset, graph_y_offset), 
+                                (graph_x_offset, graph_y_offset + graph_height), 
+                                (0, 0, 0), 2)  # Y-axis
+                        
+                        # Draw activity line (green)
+                        for i in range(1, len(display_data)):
+                            x1 = graph_x_offset + int((display_data[i-1][0] - start_display_time) / max_time_window * graph_width)
+                            y1 = graph_y_offset + graph_height - int(display_data[i-1][1] * graph_height * 0.8)
+                            x2 = graph_x_offset + int((display_data[i][0] - start_display_time) / max_time_window * graph_width)
+                            y2 = graph_y_offset + graph_height - int(display_data[i][1] * graph_height * 0.8)
+                            cv2.line(analytics_img, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                        
+                        # Draw face detection line (blue)
+                        for i in range(1, len(display_data)):
+                            x1 = graph_x_offset + int((display_data[i-1][0] - start_display_time) / max_time_window * graph_width)
+                            y1 = graph_y_offset + graph_height - int(display_data[i-1][2] * graph_height * 0.8)
+                            x2 = graph_x_offset + int((display_data[i][0] - start_display_time) / max_time_window * graph_width)
+                            y2 = graph_y_offset + graph_height - int(display_data[i][2] * graph_height * 0.8)
+                            cv2.line(analytics_img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+                        
+                        # Draw labels
+                        cv2.putText(analytics_img, "Activity Timeline (last 60 seconds)", 
+                                   (graph_x_offset, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+                        cv2.putText(analytics_img, "Activity", 
+                                   (graph_x_offset + graph_width + 10, graph_y_offset + 50), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                        cv2.putText(analytics_img, "Face Detected", 
+                                   (graph_x_offset + graph_width + 10, graph_y_offset + 80), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 0, 0), 2)
+                        
+                        # Draw time labels on x-axis
+                        cv2.putText(analytics_img, f"{int(start_display_time)}s", 
+                                   (graph_x_offset - 10, graph_y_offset + graph_height + 20), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                        cv2.putText(analytics_img, f"{int(current_time)}s", 
+                                   (graph_x_offset + graph_width - 10, graph_y_offset + graph_height + 20), 
+                                   cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 1)
+                    
+                    # Draw activity statistics
+                    stats_y = 250
+                    active_time = sum(point[1] for point in activity_history)
+                    face_time = sum(point[2] for point in activity_history)
+                    total_time = len(activity_history)
+                    
+                    if total_time > 0:
+                        active_percent = (active_time / total_time) * 100
+                        face_percent = (face_time / total_time) * 100
+                        
+                        cv2.putText(analytics_img, f"Session Statistics:", 
+                                   (50, stats_y), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 0), 2)
+                        cv2.putText(analytics_img, f"Active: {active_percent:.1f}% of time", 
+                                   (50, stats_y + 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+                        cv2.putText(analytics_img, f"Face Detected: {face_percent:.1f}% of time", 
+                                   (50, stats_y + 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+                        cv2.putText(analytics_img, f"Session Duration: {int(elapsed_time)}s", 
+                                   (50, stats_y + 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 0), 1)
+                
+                # Display the analytics
+                cv2.imshow('AFK Guardian - Analytics', analytics_img)
+                
+                # Display the camera frame
                 cv2.imshow('AFK Guardian - Camera Preview', frame)
                 
                 # Press 'q' to quit
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
                 
+                # Press 's' to save analytics data
+                if cv2.waitKey(1) & 0xFF == ord('s'):
+                    self._save_preview_analytics(activity_history)
+                
                 time.sleep(0.03)  # ~30 FPS
                 
         except Exception as e:
             print(f"Error in camera preview: {e}")
+            import traceback
+            traceback.print_exc()
         finally:
             # Clean up
             if self.cap is not None:
@@ -356,8 +465,22 @@ class AFKGuardian:
                 mouse_listener.stop()
             except:
                 pass
+            
+            # Save analytics data
+            if len(activity_history) > 0:
+                self._save_preview_analytics(activity_history)
                 
             print("Camera preview stopped.")
+    
+    def _save_preview_analytics(self, activity_history):
+        """Save preview analytics data to a CSV file."""
+        filename = os.path.join(self.data_dir, f"preview_analytics_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+        with open(filename, 'w') as f:
+            f.write("elapsed_time,is_active,face_detected\n")
+            for entry in activity_history:
+                f.write(f"{entry[0]},{entry[1]},{entry[2]}\n")
+        
+        print(f"Analytics data saved to {filename}")
 
     def generate_heatmap(self, log_file=None):
         """Generate a heatmap showing activity patterns throughout the day."""
