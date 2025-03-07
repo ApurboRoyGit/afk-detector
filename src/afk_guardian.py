@@ -23,6 +23,8 @@ class AFKGuardian:
         self.is_running = False
         self.activity_log = []
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+        # Add eye cascade classifier
+        self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
         self.cap = None
         
         # Create data directory if it doesn't exist
@@ -105,6 +107,30 @@ class AFKGuardian:
                 # Draw rectangle around faces (for debugging)
                 for (x, y, w, h) in faces:
                     cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+                    
+                    # Detect eyes within each face region
+                    roi_gray = gray[y:y+h, x:x+w]
+                    roi_color = frame[y:y+h, x:x+w]
+                    
+                    # Improve eye detection by:
+                    # 1. Using the upper half of the face for eye detection
+                    # 2. Applying histogram equalization to improve contrast
+                    # 3. Using more appropriate parameters for eye detection
+                    eye_roi_gray = roi_gray[int(h*0.1):int(h*0.5), :]
+                    eye_roi_gray = cv2.equalizeHist(eye_roi_gray)
+                    eyes = self.eye_cascade.detectMultiScale(
+                        eye_roi_gray,
+                        scaleFactor=1.1,
+                        minNeighbors=5,
+                        minSize=(30, 30),
+                        flags=cv2.CASCADE_SCALE_IMAGE
+                    )
+                    
+                    # Draw rectangle around eyes (adjust coordinates to match the ROI offset)
+                    for (ex, ey, ew, eh) in eyes:
+                        # Adjust y-coordinate to account for the ROI offset
+                        ey += int(h*0.1)
+                        cv2.rectangle(roi_color, (ex, ey), (ex+ew, ey+eh), (0, 255, 0), 2)
                 
                 # Display the resulting frame (comment out for production)
                 cv2.imshow('AFK Guardian', frame)
@@ -316,9 +342,22 @@ class AFKGuardian:
                 # Detect faces
                 faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
                 
+                # Track if eyes are detected
+                eyes_detected = False
+                
                 # Draw rectangle around faces
                 for (x, y, w, h) in faces:
                     cv2.rectangle(frame, (x, y), (x+w, y+h), (255, 0, 0), 2)
+                    
+                    # Detect eyes within each face region
+                    roi_gray = gray[y:y+h, x:x+w]
+                    roi_color = frame[y:y+h, x:x+w]
+                    eyes = self.eye_cascade.detectMultiScale(roi_gray)
+                    
+                    # Draw rectangle around eyes
+                    for (ex, ey, ew, eh) in eyes:
+                        cv2.rectangle(roi_color, (ex, ey), (ex+ew, ey+eh), (0, 255, 0), 2)
+                        eyes_detected = True
                 
                 # Check for keyboard/mouse activity
                 current_time = time.time()
@@ -341,6 +380,11 @@ class AFKGuardian:
                 face_status = f"Face Detected: {len(faces) > 0}"
                 cv2.putText(frame, face_status, (10, 30), 
                             cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                
+                # Add text to show if eyes are detected
+                eye_status = f"Eyes Detected: {eyes_detected}"
+                cv2.putText(frame, eye_status, (10, 150), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0) if eyes_detected else (0, 0, 255), 2)
                 
                 # Add text to show keyboard/mouse activity status
                 cv2.putText(frame, f"Activity: {activity_status}", (10, 70), 

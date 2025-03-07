@@ -1,26 +1,25 @@
-# AFK Guardian - Virtual Workspace Supervisor
+# AFK Guardian
 
-A simple application that monitors your presence at the computer and tracks productivity.
+A virtual workspace supervisor that monitors your activity and provides insights about your work patterns.
 
 ## Features
 
-- Face detection using webcam
-- Keyboard and mouse activity monitoring
-- AFK alerts when you're away for too long
-- Productivity analytics (time spent active vs. inactive)
-
-## Requirements
-
-- Python 3.6+
-- OpenCV
-- NumPy
-- pynput
-- plyer
-- matplotlib
+- Detects when you're away from keyboard (AFK) using:
+  - Keyboard and mouse activity monitoring
+  - Webcam-based face detection
+- Generates detailed activity reports
+- Creates activity heatmaps to visualize your work patterns
+- Analyzes break patterns and provides recommendations
+- Calculates productivity scores
+- Modern web interface for real-time monitoring and analytics
 
 ## Installation
 
-1. Clone this repository
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/afk-guardian.git
+cd afk-guardian
+```
 2. Create a virtual environment: `python3 -m venv venv`
 3. Activate the virtual environment: `source venv/bin/activate`
 4. Install dependencies: `pip install -r requirements.txt`
