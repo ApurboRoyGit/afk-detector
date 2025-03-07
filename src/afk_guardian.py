@@ -27,6 +27,11 @@ class AFKGuardian:
         self.eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
         self.cap = None
         
+        # Add face detection parameters
+        self.face_detection_history = []  # Store recent face detection results
+        self.face_history_size = 10  # Number of frames to consider for smoothing
+        self.face_confidence_threshold = 0.3  # Minimum confidence to consider face present
+        
         # Create data directory if it doesn't exist
         self.data_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'data')
         os.makedirs(self.data_dir, exist_ok=True)
@@ -99,10 +104,30 @@ class AFKGuardian:
                     continue
                     
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
-                faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
                 
-                # Update face presence status
-                self.is_face_present = len(faces) > 0
+                # Apply histogram equalization to improve contrast
+                gray = cv2.equalizeHist(gray)
+                
+                # Detect faces with more lenient parameters
+                faces = self.face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,  # More gradual scaling (was 1.3)
+                    minNeighbors=3,   # Fewer neighbors required (was 5)
+                    minSize=(30, 30),
+                    flags=cv2.CASCADE_SCALE_IMAGE
+                )
+                
+                # Calculate face confidence based on detection results
+                face_confidence = self._calculate_face_confidence(faces, frame.shape)
+                
+                # Update face detection history
+                self.face_detection_history.append(face_confidence)
+                if len(self.face_detection_history) > self.face_history_size:
+                    self.face_detection_history.pop(0)
+                
+                # Smooth face detection using recent history
+                avg_confidence = sum(self.face_detection_history) / len(self.face_detection_history)
+                self.is_face_present = avg_confidence >= self.face_confidence_threshold
                 
                 # Draw rectangle around faces (for debugging)
                 for (x, y, w, h) in faces:
@@ -132,6 +157,12 @@ class AFKGuardian:
                         ey += int(h*0.1)
                         cv2.rectangle(roi_color, (ex, ey), (ex+ew, ey+eh), (0, 255, 0), 2)
                 
+                # Add face confidence display
+                cv2.putText(frame, f"Face Confidence: {avg_confidence:.2f}", (10, 190), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+                cv2.putText(frame, f"Face Present: {self.is_face_present}", (10, 230), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0) if self.is_face_present else (0, 0, 255), 2)
+                
                 # Display the resulting frame (comment out for production)
                 cv2.imshow('AFK Guardian', frame)
                 
@@ -143,7 +174,56 @@ class AFKGuardian:
                 time.sleep(0.1)  # Reduce CPU usage
         except Exception as e:
             print(f"Error in webcam monitoring: {e}")
+            import traceback
+            traceback.print_exc()
             self.is_face_present = False  # Assume no face if webcam fails
+    
+    def _calculate_face_confidence(self, faces, frame_shape):
+        """
+        Calculate face confidence based on detection results.
+        
+        Args:
+            faces: List of detected faces (x, y, w, h)
+            frame_shape: Shape of the frame (height, width, channels)
+        
+        Returns:
+            float: Confidence value between 0 and 1
+        """
+        if len(faces) == 0:
+            return 0.0
+        
+        # Calculate based on face size relative to frame
+        frame_area = frame_shape[0] * frame_shape[1]
+        face_areas = [w * h for (x, y, w, h) in faces]
+        max_face_area = max(face_areas)
+        
+        # Calculate confidence based on face size and position
+        # A centered, larger face has higher confidence
+        max_confidence = 0.0
+        for i, (x, y, w, h) in enumerate(faces):
+            # Size factor (larger face = higher confidence)
+            size_factor = face_areas[i] / frame_area
+            
+            # Position factor (centered face = higher confidence)
+            center_x = x + w/2
+            center_y = y + h/2
+            frame_center_x = frame_shape[1] / 2
+            frame_center_y = frame_shape[0] / 2
+            
+            # Calculate distance from center (normalized)
+            distance_from_center = np.sqrt(
+                ((center_x - frame_center_x) / frame_shape[1])**2 + 
+                ((center_y - frame_center_y) / frame_shape[0])**2
+            )
+            position_factor = 1 - min(1, distance_from_center * 2)
+            
+            # Combine factors
+            confidence = 0.7 * size_factor * 100 + 0.3 * position_factor
+            confidence = min(1.0, confidence)
+            
+            max_confidence = max(max_confidence, confidence)
+        
+        return max_confidence
     
     def _check_afk(self):
         """Check if user is AFK and log activity."""
@@ -338,9 +418,28 @@ class AFKGuardian:
                 
                 # Convert to grayscale for face detection
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                gray = cv2.equalizeHist(gray)  # Improve contrast
                 
-                # Detect faces
-                faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+                # Detect faces with more lenient parameters
+                faces = self.face_cascade.detectMultiScale(
+                    gray,
+                    scaleFactor=1.1,
+                    minNeighbors=3,
+                    minSize=(30, 30),
+                    flags=cv2.CASCADE_SCALE_IMAGE
+                )
+                
+                # Calculate face confidence
+                face_confidence = self._calculate_face_confidence(faces, frame.shape)
+                
+                # Update face detection history
+                self.face_detection_history.append(face_confidence)
+                if len(self.face_detection_history) > self.face_history_size:
+                    self.face_detection_history.pop(0)
+                
+                # Smooth face detection using recent history
+                avg_confidence = sum(self.face_detection_history) / len(self.face_detection_history)
+                face_detected = avg_confidence >= self.face_confidence_threshold
                 
                 # Track if eyes are detected
                 eyes_detected = False
@@ -374,12 +473,16 @@ class AFKGuardian:
                     is_active = 0
                 
                 # Record activity data
-                activity_history.append((elapsed_time, is_active, int(len(faces) > 0)))
+                activity_history.append((elapsed_time, is_active, int(face_detected)))
+                
+                # Add text to show face confidence
+                cv2.putText(frame, f"Face Confidence: {avg_confidence:.2f}", (10, 190), 
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
                 
                 # Add text to show if a face is detected
-                face_status = f"Face Detected: {len(faces) > 0}"
+                face_status = f"Face Detected: {face_detected}"
                 cv2.putText(frame, face_status, (10, 30), 
-                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                            cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0) if face_detected else (0, 0, 255), 2)
                 
                 # Add text to show if eyes are detected
                 eye_status = f"Eyes Detected: {eyes_detected}"
